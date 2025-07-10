@@ -2,6 +2,8 @@
 Unit Tests for GitHub MCP Server
 Run these tests to validate the implementation
 """
+import json
+
 import pytest
 
 # Default values
@@ -33,6 +35,43 @@ class TestImplementation:
         assert callable(analyze_file_changes), "analyze_file_changes should be a callable function"
         assert callable(get_pr_template), "get_pr_template should be a callable function"
         assert callable(suggest_templates), "suggest_templates should be a callable function"
+
+
+@pytest.mark.skipif(not IMPORTS_SUCCESSFUL, reason="Imports failed")
+class TestSuggestTemplate:
+    """Test the suggest_template tool."""
+
+    @pytest.mark.asyncio
+    async def test_returns_json_string(self):
+        """Test that suggest_template returns a JSON string."""
+        result = await suggest_templates(
+            "Fixed a bug in the authentication system",
+            "bug"
+        )
+
+        assert isinstance(result, str), "Should return a string"
+        # Should be valid JSON
+        data = json.loads(result)
+        assert isinstance(data, dict), "Should return a JSON object"
+
+    @pytest.mark.asyncio
+    async def test_suggestion_structure(self):
+        """Test that the suggestion has expected structure."""
+        result = await suggest_templates(
+            "Added new feature for user management",
+            "feature"
+        )
+        suggestion = json.loads(result)
+
+        # For starter code, accept error messages; for full implementation, expect suggestion
+        is_implemented = not ("error" in suggestion and "Not implemented" in str(suggestion.get("error", "")))
+        if is_implemented:
+            # Check for some expected fields (flexible to allow different implementations)
+            assert any(key in suggestion for key in ["template", "recommended_template", "suggestion"]), \
+                "Should include a template recommendation"
+        else:
+            # Starter code - just verify it's structured correctly
+            assert isinstance(suggestion, dict), "Should return structured error for starter code"
 
 
 @pytest.mark.skipif(not IMPORTS_SUCCESSFUL, reason="Imports failed")
