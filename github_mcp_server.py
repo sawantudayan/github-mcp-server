@@ -178,27 +178,45 @@ async def suggest_templates(
         change_type: str
 ) -> str:
     """
-    Let Claude analyze the changes and suggest the most appropriate PR template
-    :param changes_summary: Analysis of what the changes do
-    :param change_type: Type of change you've identified (bug, feature, docs, refactor, test, etc.)
-    :return:
-        - suggestion
-    """
+    Let Claude analyze the changes and suggest the most appropriate PR template,
+    with alternatives in case of uncertainty.
 
+    Args:
+        changes_summary: Analysis of what the changes do
+        change_type: Identified type of change (e.g., bug, feature, docs)
+
+    Returns:
+        JSON object containing recommended template, alternatives, and reasoning
+    """
+    # Fetch available templates
     templates_response = await get_pr_template()
     templates = json.loads(templates_response)
 
-    template_file = TYPE_MAPPING.get(change_type.lower(), "feature.md")
+    # Normalize and lookup the main template file
+    normalized_type = change_type.lower().strip()
+    template_file = TYPE_MAPPING.get(normalized_type, "feature.md")
+
+    # Identify recommended template
     selected_template = next(
         (t for t in templates if t["filename"] == template_file),
-        templates[0]
+        templates[0]  # fallback
     )
+
+    # Build a list of alternatives (excluding selected)
+    alternatives = [
+                       t for t in templates if t["filename"] != selected_template["filename"]
+                   ][:3]  # Limit to top 3 others
 
     suggestion = {
         "recommended_template": selected_template,
-        "reasoning": f"Based on your analysis: '{changes_summary}', this appears to be a {change_type} change.",
+        "alternatives": alternatives,
+        "confidence_level": "high" if normalized_type in TYPE_MAPPING else "medium",
+        "reasoning": (
+            f"Based on your analysis: '{changes_summary}', this appears to be a "
+            f"{change_type} change. The mapping matched '{template_file}'."
+        ),
         "template_content": selected_template["content"],
-        "usage_hint": "Claude can help you fill out this template based on the specific changes in your PR."
+        "usage_hint": ("Claude can help fill out this template or explore alternatives if needed.")
     }
 
     return json.dumps(suggestion, indent=2)
