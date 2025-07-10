@@ -43,6 +43,13 @@ TYPE_MAPPING = {
     "security": "security.md"
 }
 
+"""
+Future Improvements
+- Add pagination for extremely large diffs
+- Return language-level diff summaries (e.g., how many functions modified)
+- Stream this data to Claude progressively via chunking
+"""
+
 
 @mcp.tool()
 async def analyze_file_changes(
@@ -58,8 +65,8 @@ async def analyze_file_changes(
                 roots_result = await context.session.list_roots()
                 root = roots_result.roots[0]
                 working_directory = root.uri.path
-            except Exception as e:
-                pass
+            except Exception:
+                pass  # fallback to os.getcwd()
 
         cwd = working_directory if working_directory else os.getcwd()
 
@@ -71,6 +78,7 @@ async def analyze_file_changes(
             "roots_check": None
         }
 
+        # roots debug again (redundant, but safe for tracing)
         try:
             context = mcp.get_context()
             roots_result = await context.session.list_roots()
@@ -85,6 +93,7 @@ async def analyze_file_changes(
                 "error": str(e)
             }
 
+        # --name-status gives file change summary
         files_result = subprocess.run(
             ["git", "diff", "--name-status", f"{base_branch}...HEAD"],
             capture_output=True,
@@ -93,6 +102,15 @@ async def analyze_file_changes(
             cwd=cwd
         )
 
+        files_changed = []
+        for line in files_result.stdout.strip().split('\n'):
+            if line:
+                parts = line.strip().split('\t')
+                if len(parts) == 2:
+                    status, filename = parts
+                    files_changed.append({"status": status, "file": filename})
+
+        # --stat output
         stat_result = subprocess.run(
             ["git", "diff", "--stat", f"{base_branch}...HEAD"],
             capture_output=True,
@@ -101,7 +119,9 @@ async def analyze_file_changes(
         )
 
         diff_content = ""
-        truncates = False
+        truncated = False
+        diff_lines = []
+
         if include_diff:
             diff_result = subprocess.run(
                 ["git", "diff", f"{base_branch}...HEAD"],
@@ -128,7 +148,7 @@ async def analyze_file_changes(
 
         analysis = {
             "base_branch": base_branch,
-            "files_changed": files_result.stdout,
+            "files_changed": files_changed,
             "statistics": stat_result.stdout,
             "commits": commits_result.stdout,
             "diff": diff_content if include_diff else "Diff not included (set include_diff=true to see full diff)",
