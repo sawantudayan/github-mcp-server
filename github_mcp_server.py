@@ -148,18 +148,26 @@ async def analyze_file_changes(
 @mcp.tool()
 async def get_pr_template() -> str:
     """
-    List templates from directory with their content
-    :return:
-        - templates
+    List PR templates from directory with their content.
+
+    Returns:
+        JSON list of templates with filename, type, and file content.
+        If a template file is missing or unreadable, an error message is included as content.
     """
-    templates = [
-        {
+    templates = []
+
+    for filename, template_type in DEFAULT_TEMPLATES.items():
+        template_path = TEMPLATES_DIR / filename
+        try:
+            content = template_path.read_text()
+        except Exception as e:
+            content = f"Error loading template '{filename}': {str(e)}"
+
+        templates.append({
             "filename": filename,
             "type": template_type,
-            "content": (TEMPLATES_DIR / filename).read_text()
-        }
-        for filename, template_type in DEFAULT_TEMPLATES.items()
-    ]
+            "content": content
+        })
 
     return json.dumps(templates, indent=2)
 
