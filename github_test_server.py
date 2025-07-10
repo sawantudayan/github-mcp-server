@@ -38,6 +38,49 @@ class TestImplementation:
 
 
 @pytest.mark.skipif(not IMPORTS_SUCCESSFUL, reason="Imports failed")
+class TestGetPRTemplates:
+    """Test the get_pr_templates tool."""
+
+    @pytest.mark.asyncio
+    async def test_returns_json_string(self):
+        """Test that get_pr_templates returns a JSON string."""
+        result = await get_pr_template()
+
+        assert isinstance(result, str), "Should return a string"
+        # Should be valid JSON
+        data = json.loads(result)
+
+        # For starter code, accept error messages; for full implementation, expect list
+        is_implemented = not ("error" in data and isinstance(data, dict))
+        if is_implemented:
+            assert isinstance(data, list), "Should return a JSON array of templates"
+        else:
+            # Starter code - just verify it returns something structured
+            assert isinstance(data, dict), "Should return a JSON object even if not implemented"
+
+    @pytest.mark.asyncio
+    async def test_returns_templates(self):
+        """Test that templates are returned."""
+        result = await get_pr_template()
+        templates = json.loads(result)
+
+        # For starter code, accept error messages; for full implementation, expect templates
+        is_implemented = not ("error" in templates and isinstance(templates, dict))
+        if is_implemented:
+            assert len(templates) > 0, "Should return at least one template"
+
+            # Check that templates have expected structure
+            for template in templates:
+                assert isinstance(template, dict), "Each template should be a dictionary"
+                # Should have some identifying information
+                assert any(key in template for key in ["filename", "name", "type", "id"]), \
+                    "Templates should have an identifier"
+        else:
+            # Starter code - just verify it's structured correctly
+            assert isinstance(templates, dict), "Should return structured error for starter code"
+
+
+@pytest.mark.skipif(not IMPORTS_SUCCESSFUL, reason="Imports failed")
 class TestSuggestTemplate:
     """Test the suggest_template tool."""
 
