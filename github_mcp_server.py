@@ -104,7 +104,7 @@ async def analyze_file_changes(
         truncates = False
         if include_diff:
             diff_result = subprocess.run(
-                ["git", "diff", f"{base_branch}....HEAD"],
+                ["git", "diff", f"{base_branch}...HEAD"],
                 capture_output=True,
                 text=True,
                 cwd=cwd
@@ -120,7 +120,7 @@ async def analyze_file_changes(
                 diff_content = diff_result.stdout
 
         commits_result = subprocess.run(
-            ["git", "log", "--oneline", f"{base_branch}..HEAD"],
+            ["git", "log", "--oneline", f"{base_branch}...HEAD"],
             capture_output=True,
             text=True,
             cwd=cwd
