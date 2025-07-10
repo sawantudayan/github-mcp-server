@@ -3,6 +3,7 @@ Unit Tests for GitHub MCP Server
 Run these tests to validate the implementation
 """
 import json
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -35,6 +36,77 @@ class TestImplementation:
         assert callable(analyze_file_changes), "analyze_file_changes should be a callable function"
         assert callable(get_pr_template), "get_pr_template should be a callable function"
         assert callable(suggest_templates), "suggest_templates should be a callable function"
+
+
+@pytest.mark.skipif(not IMPORTS_SUCCESSFUL, reason="Imports failed")
+class TestAnalyzeFileChanges:
+    """Test the analyze_file_changes tool."""
+
+    @pytest.mark.asyncio
+    async def test_returns_json_string(self):
+        """Test that analyze_file_changes returns a JSON string."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(stdout="", stderr="")
+
+            result = await analyze_file_changes()
+
+            assert isinstance(result, str), "Should return a string"
+            # Should be valid JSON
+            data = json.loads(result)
+            assert isinstance(data, dict), "Should return a JSON object"
+
+    @pytest.mark.asyncio
+    async def test_includes_required_fields(self):
+        """Test that the result includes expected fields."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(stdout="M\tfile1.py\n", stderr="")
+
+            result = await analyze_file_changes()
+            data = json.loads(result)
+
+            # For starter code, accept error messages; for full implementation, expect data
+            is_implemented = not ("error" in data and "Not implemented" in str(data.get("error", "")))
+            if is_implemented:
+                # Check for some expected fields (flexible to allow different implementations)
+                assert any(key in data for key in ["files_changed", "files", "changes", "diff"]), \
+                    "Result should include file change information"
+            else:
+                # Starter code - just verify it returns something structured
+                assert isinstance(data, dict), "Should return a JSON object even if not implemented"
+
+    @pytest.mark.asyncio
+    async def test_output_limiting(self):
+        """Test that large diffs are properly truncated."""
+        with patch('subprocess.run') as mock_run:
+            # Create a mock diff with many lines
+            large_diff = "\n".join([f"+ line {i}" for i in range(1000)])
+
+            # Set up mock responses
+            mock_run.side_effect = [
+                MagicMock(stdout="M\tfile1.py\n", stderr=""),  # files changed
+                MagicMock(stdout="1 file changed, 1000 insertions(+)", stderr=""),  # stats
+                MagicMock(stdout=large_diff, stderr=""),  # diff
+                MagicMock(stdout="abc123 Initial commit", stderr="")  # commits
+            ]
+
+            # Test with default limit (500 lines)
+            result = await analyze_file_changes(include_diff=True)
+            data = json.loads(result)
+
+            # Check if it's implemented
+            if "error" not in data or "Not implemented" not in str(data.get("error", "")):
+                if "diff" in data and data["diff"] != "Diff not included (set include_diff=true to see full diff)":
+                    diff_lines = data["diff"].split('\n')
+                    # Should be truncated to around 500 lines plus truncation message
+                    assert len(diff_lines) < 600, "Large diffs should be truncated"
+
+                    # Check for truncation indicator
+                    if "truncated" in data:
+                        assert data["truncated"] == True, "Should indicate truncation"
+
+                    # Should have truncation message
+                    assert "truncated" in data["diff"].lower() or "..." in data["diff"], \
+                        "Should indicate diff was truncated"
 
 
 @pytest.mark.skipif(not IMPORTS_SUCCESSFUL, reason="Imports failed")
