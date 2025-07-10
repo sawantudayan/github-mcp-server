@@ -145,5 +145,24 @@ async def analyze_file_changes(
         return json.dumps({"error": str(e)})
 
 
+@mcp.tool()
+async def get_pr_template() -> str:
+    """
+    List templates from directory with their content
+    :return:
+        - templates
+    """
+    templates = [
+        {
+            "filename": filename,
+            "type": template_type,
+            "content": (TEMPLATES_DIR / filename).read_text()
+        }
+        for filename, template_type in DEFAULT_TEMPLATES.items()
+    ]
+
+    return json.dumps(templates, indent=2)
+
+
 if __name__ == "__main__":
     mcp.run()
