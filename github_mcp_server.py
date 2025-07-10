@@ -239,9 +239,7 @@ async def suggest_templates(
     )
 
     # Build a list of alternatives (excluding selected)
-    alternatives = [
-                       t for t in templates if t["filename"] != selected_template["filename"]
-                   ][:3]  # Limit to top 3 others
+    alternatives = [t for t in templates if t["filename"] != selected_template["filename"]][:3]  # Limit to top 3 others
 
     suggestion = {
         "recommended_template": selected_template,
