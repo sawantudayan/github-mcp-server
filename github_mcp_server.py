@@ -164,5 +164,37 @@ async def get_pr_template() -> str:
     return json.dumps(templates, indent=2)
 
 
+@mcp.tool()
+async def suggest_templates(
+        changes_summary: str,
+        change_type: str
+) -> str:
+    """
+    Let Claude analyze the changes and suggest the most appropriate PR template
+    :param changes_summary: Analysis of what the changes do
+    :param change_type: Type of change you've identified (bug, feature, docs, refactor, test, etc.)
+    :return:
+        - suggestion
+    """
+
+    templates_response = await get_pr_template()
+    templates = json.loads(templates_response)
+
+    template_file = TYPE_MAPPING.get(change_type.lower(), "feature.md")
+    selected_template = next(
+        (t for t in templates if t["filename"] == template_file),
+        templates[0]
+    )
+
+    suggestion = {
+        "recommended_template": selected_template,
+        "reasoning": f"Based on your analysis: '{changes_summary}', this appears to be a {change_type} change.",
+        "template_content": selected_template["content"],
+        "usage_hint": "Claude can help you fill out this template based on the specific changes in your PR."
+    }
+
+    return json.dumps(suggestion, indent=2)
+
+
 if __name__ == "__main__":
     mcp.run()
