@@ -145,6 +145,14 @@ async def analyze_file_changes(
         return json.dumps({"error": str(e)})
 
 
+"""
+Future Improvements 
+- Dynamic scanning of template directories (instead of hardcoded DEFAULT_TEMPLATES)
+- Sorting or prioritizing templates
+- Allowing Claude to create new templates dynamically 
+"""
+
+
 @mcp.tool()
 async def get_pr_template() -> str:
     """
@@ -170,6 +178,14 @@ async def get_pr_template() -> str:
         })
 
     return json.dumps(templates, indent=2)
+
+
+"""
+Future Improvements
+- Add keywords per template for semantic suggestions
+- Use Claude to classify changes_summary dynamically (instead of needing change_type)
+- Introduce confidence scoring based on token overlap or similarity between changes_summary and template_content 
+"""
 
 
 @mcp.tool()
