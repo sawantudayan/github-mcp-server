@@ -90,27 +90,10 @@ async def analyze_file_changes(
         base_branch: str = "master",
         include_diff: bool = True,
         max_diff_lines: int = 500,
-        page: int = 1,
-        page_size: int = 100,
         working_directory: Optional[str] = None
 ):
-    """
-    Analyze git file changes with support for pagination, language-level summaries,
-    and streaming data to Claude progressively.
-
-    Args:
-        base_branch: Branch to diff against (default 'master')
-        include_diff: Whether to include diff content in response
-        max_diff_lines: Max total diff lines to fetch and paginate through
-        page: Page number for paginated diff output (1-based)
-        page_size: Number of diff lines per page
-        working_directory: Optional path to repo root
-
-    Returns:
-        JSON with files changed, stats, commits, paginated diff, language summary,
-        and debug info.
-    """
     try:
+        # Determine working directory
         if working_directory is None:
             try:
                 context = mcp.get_context()
@@ -118,18 +101,42 @@ async def analyze_file_changes(
                 root = roots_result.roots[0]
                 working_directory = root.uri.path
             except Exception:
-                pass
+                pass  # fallback to os.getcwd()
 
         cwd = working_directory if working_directory else os.getcwd()
+        cwd_path = Path(cwd)
 
         debug_info = {
             "provided_working_directory": working_directory,
             "actual_cwd": cwd,
             "server_process_cwd": os.getcwd(),
             "server_file_location": str(Path(__file__).parent),
-            "roots_check": None
+            "roots_check": None,
+            "git_repo_detected": False,
+            "git_version": None
         }
 
+        # Check if current directory is a git repo
+        try:
+            git_check = subprocess.run(
+                ["git", "rev-parse", "--is-inside-work-tree"],
+                capture_output=True, text=True, cwd=cwd, check=True
+            )
+            is_git_repo = git_check.stdout.strip() == "true"
+            debug_info["git_repo_detected"] = is_git_repo
+        except subprocess.CalledProcessError:
+            is_git_repo = False
+
+        # Get git version for reference/debug
+        try:
+            git_version = subprocess.run(
+                ["git", "--version"], capture_output=True, text=True, check=True
+            )
+            debug_info["git_version"] = git_version.stdout.strip()
+        except Exception:
+            pass
+
+        # roots debug again (redundant, but safe)
         try:
             context = mcp.get_context()
             roots_result = await context.session.list_roots()
@@ -144,14 +151,31 @@ async def analyze_file_changes(
                 "error": str(e)
             }
 
-        files_result = subprocess.run(
-            ["git", "diff", "--name-status", f"{base_branch}...HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-            cwd=cwd
-        )
+        # Prepare git diff commands depending on repo detection
+        if is_git_repo:
+            # Normal git diff commands inside repo
+            diff_base = f"{base_branch}...HEAD"
 
+            files_cmd = ["git", "diff", "--name-status", diff_base]
+            stat_cmd = ["git", "diff", "--stat", diff_base]
+            diff_cmd = ["git", "diff", diff_base]
+            commits_cmd = ["git", "log", "--oneline", diff_base]
+        else:
+            # Not a git repo: fallback to --no-index diff for files changed (empty, or directories)
+            # Here, we can only do limited diffs, for example between base_branch folder and current
+            # But since base_branch is not valid, just return an error message with debug info
+            return {
+                "result": json.dumps({
+                    "error": (
+                        "Current directory is NOT a git repository. "
+                        "Please provide a valid git repo working_directory or run inside a repo."
+                    ),
+                    "_debug": debug_info
+                })
+            }
+
+        # Run commands and collect results
+        files_result = subprocess.run(files_cmd, capture_output=True, text=True, check=True, cwd=cwd)
         files_changed = []
         for line in files_result.stdout.strip().split('\n'):
             if line:
@@ -160,74 +184,25 @@ async def analyze_file_changes(
                     status, filename = parts
                     files_changed.append({"status": status, "file": filename})
 
-        stat_result = subprocess.run(
-            ["git", "diff", "--stat", f"{base_branch}...HEAD"],
-            capture_output=True,
-            text=True,
-            cwd=cwd
-        )
+        stat_result = subprocess.run(stat_cmd, capture_output=True, text=True, cwd=cwd)
 
         diff_content = ""
         truncated = False
         diff_lines = []
 
         if include_diff:
-            diff_result = subprocess.run(
-                ["git", "diff", f"{base_branch}...HEAD"],
-                capture_output=True,
-                text=True,
-                cwd=cwd
-            )
-            all_diff_lines = diff_result.stdout.split('\n')
+            diff_result = subprocess.run(diff_cmd, capture_output=True, text=True, cwd=cwd)
+            diff_lines = diff_result.stdout.split('\n')
 
-            # Pagination logic
-            total_lines = len(all_diff_lines)
-            start_line = (page - 1) * page_size
-            end_line = start_line + page_size
-            paged_diff_lines = all_diff_lines[start_line:end_line]
-
-            diff_content = '\n'.join(paged_diff_lines)
-
-            if end_line < total_lines:
-                diff_content += f"\n\n... Page {page} of {((total_lines - 1) // page_size) + 1} ... Use page param to see more ..."
-
-            if total_lines > max_diff_lines:
+            if len(diff_lines) > max_diff_lines:
+                diff_content = '\n'.join(diff_lines[:max_diff_lines])
+                diff_content += f"\n\n... Output truncated. Showing {max_diff_lines} of {len(diff_lines)} lines ..."
+                diff_content += "\n... Use max_diff_lines parameter to see more ..."
                 truncated = True
-                diff_content += f"\n\n... Total diff lines exceed max_diff_lines ({max_diff_lines}), output truncated."
+            else:
+                diff_content = diff_result.stdout
 
-            diff_lines = paged_diff_lines
-
-        commits_result = subprocess.run(
-            ["git", "log", "--oneline", f"{base_branch}...HEAD"],
-            capture_output=True,
-            text=True,
-            cwd=cwd
-        )
-
-        # Language-level diff summaries: count functions modified (basic heuristic)
-        lang_function_counts = {}
-
-        # Simple regex patterns for function definitions by language
-        lang_patterns = {
-            "python": re.compile(r'^\+.*def\s+\w+\('),
-            "javascript": re.compile(r'^\+.*function\s+\w+\('),
-            "typescript": re.compile(r'^\+.*function\s+\w+\('),
-            "java": re.compile(r'^\+.*(public|private|protected)\s+\w+\s+\w+\('),
-            "csharp": re.compile(r'^\+.*(public|private|protected)\s+\w+\s+\w+\('),
-            "go": re.compile(r'^\+.*func\s+\w+\('),
-            # Add more languages/patterns as needed
-        }
-
-        for line in diff_lines:
-            for lang, pattern in lang_patterns.items():
-                if pattern.match(line):
-                    lang_function_counts[lang] = lang_function_counts.get(lang, 0) + 1
-
-        # Example streaming data chunking logic (pseudo-code/comment)
-        # for chunk in chunkify(all_diff_lines, chunk_size=100):
-        #     await claude_client.send(chunk)
-        #     # Could await a response or just stream progressively
-        #     # For now, just a placeholder comment here
+        commits_result = subprocess.run(commits_cmd, capture_output=True, text=True, cwd=cwd)
 
         analysis = {
             "base_branch": base_branch,
@@ -235,20 +210,17 @@ async def analyze_file_changes(
             "statistics": stat_result.stdout,
             "commits": commits_result.stdout,
             "diff": diff_content if include_diff else "Diff not included (set include_diff=true to see full diff)",
-            "diff_page": page,
-            "diff_page_size": page_size,
             "truncated": truncated,
-            "total_diff_lines": len(all_diff_lines) if include_diff else 0,
-            "language_function_modifications": lang_function_counts,
+            "total_diff_lines": len(diff_lines) if include_diff else 0,
             "_debug": debug_info
         }
 
         return {"result": json.dumps(analysis)}
 
     except subprocess.CalledProcessError as e:
-        return {"error": f"Git Error: {e.stderr}"}
+        return {"result": json.dumps({"error": f"Git Error: {e.stderr}", "_debug": debug_info})}
     except Exception as e:
-        return {"error": str(e)}
+        return {"result": json.dumps({"error": str(e), "_debug": debug_info})}
 
 
 """
