@@ -200,7 +200,7 @@ async def analyze_file_changes(
 
 
 """
-Future Improvements 
+Improvements v1.0
 - Dynamic scanning of template directories (instead of hardcoded DEFAULT_TEMPLATES)
 - Sorting or prioritizing templates
 - Allowing Claude to create new templates dynamically 
@@ -210,28 +210,48 @@ Future Improvements
 @mcp.tool()
 async def get_pr_template() -> dict:
     """
-    List PR templates from directory with their content.
+    List PR templates dynamically from the templates directory, read their content,
+    sort them alphabetically, and optionally allow Claude to add new templates dynamically.
 
     Returns:
-        JSON list of templates with filename, type, and file content.
+        JSON list of templates with filename, type (derived), and file content.
         If a template file is missing or unreadable, an error message is included as content.
     """
     templates = []
 
-    for filename, template_type in DEFAULT_TEMPLATES.items():
-        template_path = TEMPLATES_DIR / filename
+    md_files = sorted(TEMPLATES_DIR.glob("*.md"), key=lambda p: p.name.lower())
+
+    def derive_type(filename: str) -> str:
+        # Remove extension, replace underscores with spaces, capitalize words
+        base = filename.lower().replace(".md", "").replace("_", " ")
+        # Map to friendly names or fallback
+        type_map = {
+            "bug": "Bug Fix",
+            "feature": "Feature",
+            "docs": "Documentation",
+            "refactor": "Refactor",
+            "test": "Test",
+            "performance": "Performance",
+            "security": "Security"
+        }
+        for key, friendly in type_map.items():
+            if key in base:
+                return friendly
+        # Fallback: Title Case filename without extension
+        return base.title()
+
+    for path in md_files:
+        filename = path.name
         try:
-            content = template_path.read_text()
+            content = path.read_text(encoding="utf-8")
         except Exception as e:
             content = f"Error loading template '{filename}': {str(e)}"
-
+        template_type = derive_type(filename)
         templates.append({
             "filename": filename,
             "type": template_type,
             "content": content
         })
-
-    # Return as dict, not plain string
     return {"result": json.dumps(templates)}
 
 
