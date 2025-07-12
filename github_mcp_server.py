@@ -357,5 +357,118 @@ async def suggest_templates(changes_summary: str, change_type: str = None) -> st
     return {"result": json.dumps(suggestion)}
 
 
+@mcp.tool()
+async def classify_commit_history(limit: int = 10):
+    """
+    Categorize the recent git commit history into types: feature, bugfix, docs, refactor, etc.
+
+    Args:
+        limit: Number of commits to inspect (default: 10)
+    """
+    try:
+        result = subprocess.run(
+            ["git", "log", f"-n {limit}", "--pretty=format:%s"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        commits = result.stdout.strip().split("\n")
+        categorized = {"feature": [], "bugfix": [], "docs": [], "refactor": [], "other": []}
+
+        for msg in commits:
+            lowered = msg.lower()
+            if any(word in lowered for word in ["add", "feature"]):
+                categorized["feature"].append(msg)
+            elif "fix" in lowered:
+                categorized["bugfix"].append(msg)
+            elif "doc" in lowered:
+                categorized["docs"].append(msg)
+            elif "refactor" in lowered:
+                categorized["refactor"].append(msg)
+            else:
+                categorized["other"].append(msg)
+
+        return {"result": json.dumps(categorized)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def get_changed_modules(base_branch: str = "master"):
+    """
+    Return top-level modules/packages/files that changed since base_branch.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", f"{base_branch}...HEAD"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        paths = result.stdout.strip().split("\n")
+        modules = sorted(set(path.split("/")[0] for path in paths if path))
+        return {"result": json.dumps(modules)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def suggest_reviewers():
+    """
+    Suggest reviewers based on recent commit authors in the branch.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "log", "--pretty=format:%an <%ae>"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        authors = result.stdout.strip().split("\n")
+        unique_authors = sorted(set(authors))[:5]  # Top 5 unique
+        return {"result": json.dumps(unique_authors)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def detect_sensitive_tokens():
+    """
+    Scan the git diff for any potential secrets or tokens.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--unified=0"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        suspicious_lines = [
+            line for line in result.stdout.split("\n")
+            if any(keyword in line.lower() for keyword in ["secret", "token", "apikey", "password", "auth"])
+        ]
+        return {"result": json.dumps(suspicious_lines)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def summarize_commit_messages(limit: int = 10):
+    """
+    Summarize last N commit messages.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "log", f"-n {limit}", "--pretty=format:%h %s"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        summary = result.stdout.strip().split("\n")
+        return {"result": json.dumps(summary)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 if __name__ == "__main__":
     mcp.run()
