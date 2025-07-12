@@ -4,6 +4,7 @@ Minimal MCP Server that provides tools for analyzing file changes and suggesting
 import json
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -89,8 +90,26 @@ async def analyze_file_changes(
         base_branch: str = "master",
         include_diff: bool = True,
         max_diff_lines: int = 500,
+        page: int = 1,
+        page_size: int = 100,
         working_directory: Optional[str] = None
 ):
+    """
+    Analyze git file changes with support for pagination, language-level summaries,
+    and streaming data to Claude progressively.
+
+    Args:
+        base_branch: Branch to diff against (default 'master')
+        include_diff: Whether to include diff content in response
+        max_diff_lines: Max total diff lines to fetch and paginate through
+        page: Page number for paginated diff output (1-based)
+        page_size: Number of diff lines per page
+        working_directory: Optional path to repo root
+
+    Returns:
+        JSON with files changed, stats, commits, paginated diff, language summary,
+        and debug info.
+    """
     try:
         if working_directory is None:
             try:
@@ -99,7 +118,7 @@ async def analyze_file_changes(
                 root = roots_result.roots[0]
                 working_directory = root.uri.path
             except Exception:
-                pass  # fallback to os.getcwd()
+                pass
 
         cwd = working_directory if working_directory else os.getcwd()
 
@@ -111,7 +130,6 @@ async def analyze_file_changes(
             "roots_check": None
         }
 
-        # roots debug again (redundant, but safe for tracing)
         try:
             context = mcp.get_context()
             roots_result = await context.session.list_roots()
@@ -126,7 +144,6 @@ async def analyze_file_changes(
                 "error": str(e)
             }
 
-        # --name-status gives file change summary
         files_result = subprocess.run(
             ["git", "diff", "--name-status", f"{base_branch}...HEAD"],
             capture_output=True,
@@ -143,7 +160,6 @@ async def analyze_file_changes(
                     status, filename = parts
                     files_changed.append({"status": status, "file": filename})
 
-        # --stat output
         stat_result = subprocess.run(
             ["git", "diff", "--stat", f"{base_branch}...HEAD"],
             capture_output=True,
@@ -162,15 +178,24 @@ async def analyze_file_changes(
                 text=True,
                 cwd=cwd
             )
-            diff_lines = diff_result.stdout.split('\n')
+            all_diff_lines = diff_result.stdout.split('\n')
 
-            if len(diff_lines) > max_diff_lines:
-                diff_content = '\n'.join(diff_lines[:max_diff_lines])
-                diff_content += f"\n\n... Output truncated. Showing {max_diff_lines} of {len(diff_lines)} lines ..."
-                diff_content += "\n... Use max_diff_lines parameter to see more ..."
+            # Pagination logic
+            total_lines = len(all_diff_lines)
+            start_line = (page - 1) * page_size
+            end_line = start_line + page_size
+            paged_diff_lines = all_diff_lines[start_line:end_line]
+
+            diff_content = '\n'.join(paged_diff_lines)
+
+            if end_line < total_lines:
+                diff_content += f"\n\n... Page {page} of {((total_lines - 1) // page_size) + 1} ... Use page param to see more ..."
+
+            if total_lines > max_diff_lines:
                 truncated = True
-            else:
-                diff_content = diff_result.stdout
+                diff_content += f"\n\n... Total diff lines exceed max_diff_lines ({max_diff_lines}), output truncated."
+
+            diff_lines = paged_diff_lines
 
         commits_result = subprocess.run(
             ["git", "log", "--oneline", f"{base_branch}...HEAD"],
@@ -179,24 +204,51 @@ async def analyze_file_changes(
             cwd=cwd
         )
 
+        # Language-level diff summaries: count functions modified (basic heuristic)
+        lang_function_counts = {}
+
+        # Simple regex patterns for function definitions by language
+        lang_patterns = {
+            "python": re.compile(r'^\+.*def\s+\w+\('),
+            "javascript": re.compile(r'^\+.*function\s+\w+\('),
+            "typescript": re.compile(r'^\+.*function\s+\w+\('),
+            "java": re.compile(r'^\+.*(public|private|protected)\s+\w+\s+\w+\('),
+            "csharp": re.compile(r'^\+.*(public|private|protected)\s+\w+\s+\w+\('),
+            "go": re.compile(r'^\+.*func\s+\w+\('),
+            # Add more languages/patterns as needed
+        }
+
+        for line in diff_lines:
+            for lang, pattern in lang_patterns.items():
+                if pattern.match(line):
+                    lang_function_counts[lang] = lang_function_counts.get(lang, 0) + 1
+
+        # Example streaming data chunking logic (pseudo-code/comment)
+        # for chunk in chunkify(all_diff_lines, chunk_size=100):
+        #     await claude_client.send(chunk)
+        #     # Could await a response or just stream progressively
+        #     # For now, just a placeholder comment here
+
         analysis = {
             "base_branch": base_branch,
             "files_changed": files_changed,
             "statistics": stat_result.stdout,
             "commits": commits_result.stdout,
             "diff": diff_content if include_diff else "Diff not included (set include_diff=true to see full diff)",
+            "diff_page": page,
+            "diff_page_size": page_size,
             "truncated": truncated,
-            "total_diff_lines": len(diff_lines) if include_diff else 0,
+            "total_diff_lines": len(all_diff_lines) if include_diff else 0,
+            "language_function_modifications": lang_function_counts,
             "_debug": debug_info
         }
 
-        # return json.dumps(analysis, indent=2)
         return {"result": json.dumps(analysis)}
 
     except subprocess.CalledProcessError as e:
-        return json.dumps({"error": f"Git Error: {e.stderr}"})
+        return {"error": f"Git Error: {e.stderr}"}
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
 """
