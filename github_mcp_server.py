@@ -2,6 +2,7 @@
 Minimal MCP Server that provides tools for analyzing file changes and suggesting PR Templates
 """
 import json
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -9,11 +10,18 @@ from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
 # Initialize FastMCP Server
 mcp = FastMCP("github-mcp-server")
 
 # PR Templates directory (shared across all modules)
-TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
+# TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
+
+TEMPLATES_DIR = Path(os.getenv("GITHUB_MCP_TEMPLATES_DIR")) if os.getenv("GITHUB_MCP_TEMPLATES_DIR") else Path(
+    __file__).parent / "templates"
+print(TEMPLATES_DIR)
 
 # Default PT Templates
 DEFAULT_TEMPLATES = {
@@ -53,7 +61,7 @@ Future Improvements
 
 @mcp.tool()
 async def analyze_file_changes(
-        base_branch: str = "main",
+        base_branch: str = "master",
         include_diff: bool = True,
         max_diff_lines: int = 500,
         working_directory: Optional[str] = None
@@ -157,7 +165,8 @@ async def analyze_file_changes(
             "_debug": debug_info
         }
 
-        return json.dumps(analysis, indent=2)
+        # return json.dumps(analysis, indent=2)
+        return {"result": json.dumps(analysis)}
 
     except subprocess.CalledProcessError as e:
         return json.dumps({"error": f"Git Error: {e.stderr}"})
@@ -174,7 +183,7 @@ Future Improvements
 
 
 @mcp.tool()
-async def get_pr_template() -> str:
+async def get_pr_template() -> dict:
     """
     List PR templates from directory with their content.
 
@@ -197,7 +206,8 @@ async def get_pr_template() -> str:
             "content": content
         })
 
-    return json.dumps(templates, indent=2)
+    # Return as dict, not plain string
+    return {"result": json.dumps(templates)}
 
 
 """
@@ -253,7 +263,10 @@ async def suggest_templates(
         "usage_hint": ("Claude can help fill out this template or explore alternatives if needed.")
     }
 
-    return json.dumps(suggestion, indent=2)
+    # return json.dumps(suggestion, indent=2)
+    return {
+        "result": json.dumps(suggestion)  # keep it compact, no indent needed
+    }
 
 
 if __name__ == "__main__":
