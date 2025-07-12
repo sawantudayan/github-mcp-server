@@ -7,6 +7,8 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+pytest_plugins = ["pytest_asyncio"]
+
 # Default values
 IMPORTS_SUCCESSFUL = None
 IMPORT_ERROR = None
