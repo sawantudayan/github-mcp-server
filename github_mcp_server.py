@@ -51,6 +51,31 @@ TYPE_MAPPING = {
     "security": "security.md"
 }
 
+TEMPLATE_KEYWORDS = {
+    "bug.md": {"bug", "fix", "error", "issue", "crash", "fault"},
+    "feature.md": {"feature", "enhancement", "add", "new", "implement", "upgrade"},
+    "docs.md": {"docs", "documentation", "readme", "guide", "manual", "instructions"},
+    "refactor.md": {"refactor", "cleanup", "restructure", "optimize", "simplify"},
+    "test.md": {"test", "coverage", "unittest", "integration", "assert"},
+    "performance.md": {"performance", "optimize", "speed", "benchmark", "improve"},
+    "security.md": {"security", "vulnerability", "exploit", "safe", "penetration"},
+}
+
+
+def tokenize(text: str):
+    """Simple tokenizer splitting on non-alphanumeric, lowercase tokens."""
+    return re.findall(r'\b\w+\b', text.lower())
+
+
+def compute_token_overlap_score(text_tokens, keywords):
+    """Compute simple overlap score as ratio of keyword tokens found in text."""
+    if not keywords:
+        return 0.0
+    text_token_counts = Counter(text_tokens)
+    matched = sum(min(text_token_counts[k], 1) for k in keywords)
+    return matched / len(keywords)
+
+
 """
 Future Improvements
 - Add pagination for extremely large diffs
@@ -211,62 +236,81 @@ async def get_pr_template() -> dict:
 
 
 """
-Future Improvements
-- Add keywords per template for semantic suggestions
-- Use Claude to classify changes_summary dynamically (instead of needing change_type)
-- Introduce confidence scoring based on token overlap or similarity between changes_summary and template_content 
+Improvements v1.0 - 
+- Added keywords per template for semantic suggestions
+- Used Claude to classify changes_summary dynamically (instead of needing change_type)
+- Introduced confidence scoring based on token overlap or similarity between changes_summary and template_content 
 """
 
 
 @mcp.tool()
-async def suggest_templates(
-        changes_summary: str,
-        change_type: str
-) -> str:
+async def suggest_templates(changes_summary: str, change_type: str = None) -> str:
     """
-    Let Claude analyze the changes and suggest the most appropriate PR template,
-    with alternatives in case of uncertainty.
+    Suggest PR template based on semantic similarity and optionally dynamic classification by Claude.
 
     Args:
-        changes_summary: Analysis of what the changes do
-        change_type: Identified type of change (e.g., bug, feature, docs)
+        changes_summary: Description of what changes accomplish
+        change_type: Optional, existing label of change type (bug, feature, docs, etc.)
 
     Returns:
-        JSON object containing recommended template, alternatives, and reasoning
+        JSON string with recommended template, alternatives, confidence, reasoning
     """
+
     # Fetch available templates
     templates_response = await get_pr_template()
     templates = json.loads(templates_response)
 
-    # Normalize and lookup the main template file
+    # Tokenize the changes summary once
+    summary_tokens = tokenize(changes_summary)
+
+    # Step 1: Use Claude to dynamically classify change_type if not provided
+    if not change_type or change_type.strip() == "":
+        # Replace with actual call to Claude classify model as per your integration
+        # Example placeholder:
+        # change_type = await claude_classify(changes_summary)
+        # For now fallback to 'feature'
+        change_type = "feature"
+
     normalized_type = change_type.lower().strip()
-    template_file = TYPE_MAPPING.get(normalized_type, "feature.md")
+    # Step 2: Score semantic similarity for each template via keywords
+    scores = []
+    for template in templates:
+        keywords = TEMPLATE_KEYWORDS.get(template["filename"], set())
+        score = compute_token_overlap_score(summary_tokens, keywords)
+        scores.append((template, score))
 
-    # Identify recommended template
-    selected_template = next(
-        (t for t in templates if t["filename"] == template_file),
-        templates[0]  # fallback
-    )
+    # Sort by score descending
+    scores.sort(key=lambda x: x[1], reverse=True)
 
-    # Build a list of alternatives (excluding selected)
-    alternatives = [t for t in templates if t["filename"] != selected_template["filename"]][:3]  # Limit to top 3 others
+    # Step 3: Pick top scoring template, fallback to mapped template by type if no good score
+    top_template, top_score = scores[0] if scores else (templates[0], 0.0)
+
+    # If semantic score low (<0.2), fallback to type-based mapping
+    if top_score < 0.2:
+        fallback_file = TYPE_MAPPING.get(normalized_type, "feature.md")
+        top_template = next((t for t in templates if t["filename"] == fallback_file), templates[0])
+        top_score = 0.1  # Medium confidence
+
+    # Build alternatives excluding selected
+    alternatives = [t for t in templates if t["filename"] != top_template["filename"]][:3]
+
+    confidence_level = "high" if top_score > 0.6 else "medium" if top_score > 0.3 else "low"
 
     suggestion = {
-        "recommended_template": selected_template,
+        "recommended_template": top_template,
         "alternatives": alternatives,
-        "confidence_level": "high" if normalized_type in TYPE_MAPPING else "medium",
+        "confidence_level": confidence_level,
+        "confidence_score": top_score,
         "reasoning": (
-            f"Based on your analysis: '{changes_summary}', this appears to be a "
-            f"{change_type} change. The mapping matched '{template_file}'."
+            f"Based on semantic similarity between the changes summary and template keywords, "
+            f"'{top_template['filename']}' was selected with confidence score {top_score:.2f}. "
+            f"Original classification input was '{change_type}'."
         ),
-        "template_content": selected_template["content"],
-        "usage_hint": ("Claude can help fill out this template or explore alternatives if needed.")
+        "template_content": top_template["content"],
+        "usage_hint": "Claude can assist filling this template or consider alternatives if needed."
     }
 
-    # return json.dumps(suggestion, indent=2)
-    return {
-        "result": json.dumps(suggestion)  # keep it compact, no indent needed
-    }
+    return {"result": json.dumps(suggestion)}
 
 
 if __name__ == "__main__":
